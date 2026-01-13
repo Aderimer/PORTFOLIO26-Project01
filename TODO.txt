@@ -1,0 +1,4 @@
+- Add sequelize with sqlite support
+- CRUD for users
+- Car table with data and CRUD
+- Login for admins and customers
