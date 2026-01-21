@@ -1,5 +1,7 @@
 var express = require("express");
 var passport = require("passport");
+var jsend = require("jsend");
+var jwt = require("jsonwebtoken");
 var LocalStrategy = require("passport-local");
 var crypto = require("crypto");
 var db = require("../models");
@@ -8,7 +10,7 @@ var userService = new UserService(db);
 
 passport.use(
   new LocalStrategy(function verify(username, password, cb) {
-    userService.getOneByName(username).then((data) => {
+    userService.getUserByEmail(username).then((data) => {
       if (data === null) {
         return cb(null, false, { message: "Incorrect username or password." });
       }
@@ -28,15 +30,15 @@ passport.use(
             });
           }
           return cb(null, data);
-        }
+        },
       );
     });
-  })
+  }),
 );
 
 passport.serializeUser(function (user, cb) {
   process.nextTick(function () {
-    cb(null, { id: user.id, username: user.Username, role: user.Role });
+    cb(null, { id: user.id, username: user.email });
   });
 });
 
@@ -47,18 +49,7 @@ passport.deserializeUser(function (user, cb) {
 });
 
 var router = express.Router();
-router.get("/login", function (req, res, next) {
-  const username = req.user?.username;
-  res.render("login", { username });
-});
-router.post(
-  "/login/password",
-  passport.authenticate("local", {
-    successReturnToOrRedirect: "/",
-    failureRedirect: "/login",
-    failureMessage: true,
-  })
-);
+router.use(jsend.middleware);
 
 router.post("/logout", function (req, res, next) {
   req.logout(function (err) {
@@ -69,11 +60,25 @@ router.post("/logout", function (req, res, next) {
   });
 });
 
-router.get("/signup", function (req, res, next) {
-  res.render("signup");
-});
-
 router.post("/signup", function (req, res, next) {
+  if (
+    !req.body.email ||
+    !req.body.password ||
+    !req.body.fName ||
+    !req.body.lName
+  ) {
+    return res.jsend.fail({
+      statusCode: 400,
+      message: "All fields are required.",
+    });
+  }
+  const existingUser = userService.getUserByEmail(req.body.email);
+  if (existingUser) {
+    return res.jsend.fail({
+      statusCode: 400,
+      message: "A user with that email already exists.",
+    });
+  }
   var salt = crypto.randomBytes(16);
   crypto.pbkdf2(
     req.body.password,
@@ -85,16 +90,86 @@ router.post("/signup", function (req, res, next) {
       if (err) {
         return next(err);
       }
-      userService.create(
+      userService.createUser(
         req.body.fName,
         req.body.lName,
         req.body.email,
         salt,
-        hashedPassword
+        hashedPassword,
       );
-      res.redirect("/login");
-    }
+      res.redirect("/users/login");
+    },
   );
+});
+
+router.post("/login", async (req, res, next) => {
+  const { email, password } = req.body;
+  if (email == null) {
+    return res.jsend.fail({ statusCode: 400, email: "Email is required." });
+  }
+  if (password == null) {
+    return res.jsend.fail({
+      statusCode: 400,
+      password: "Password is required.",
+    });
+  }
+  userService.getUserByEmail(email).then((data) => {
+    if (data === null) {
+      return res.jsend.fail({ result: "Incorrect email or password." });
+    }
+    crypto.pbkdf2(
+      password,
+      data.salt,
+      310000,
+      32,
+      "sha256",
+      function (err, hashedPassword) {
+        if (err) {
+          return createBrotliCompress(err);
+        }
+        if (!crypto.timingSafeEqual(data.encryptedPassword, hashedPassword)) {
+          return res.jsend.fail({ result: "Incorrect email or password." });
+        }
+        let token;
+        try {
+          token = jwt.sign(
+            { id: data.id, email: data.Email },
+            process.env.TOKEN_SECRET,
+            { expiresIn: "1h" },
+          );
+        } catch (err) {
+          res.jsend.fail("Something went wrong with creating JWT token.");
+        }
+        res.jsend.success({
+          statusCode: 200,
+          result: "You are now logged in.",
+          id: data.id,
+          email: data.mail,
+          token: token,
+        });
+      },
+    );
+  });
+});
+
+router.get("/:id", async (req, res) => {
+  const userId = req.params.id;
+  try {
+    if (!isNaN(userId)) {
+      const user = await userService.getUserById(userId);
+      if (user) {
+        res.status(200).json(user);
+      } else {
+        res.status(404).json({ message: "User not found" });
+      }
+    } else {
+      res.status(400).json({ message: "Invalid user ID format" });
+    }
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error retrieving user", error: error.message });
+  }
 });
 
 module.exports = router;

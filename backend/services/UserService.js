@@ -1,5 +1,3 @@
-const { INTEGER } = require("sequelize");
-
 class UserService {
   constructor(db) {
     this.db = require("../models");
@@ -7,15 +5,22 @@ class UserService {
   }
 
   async createUser(fName, lName, email, encryptedPassword, salt) {
-    const newUser = await this.User.create({
-      fName,
-      lName,
-      email,
-      password,
-      encryptedPassword,
-      salt,
-    });
-    return newUser.id, newUser.fName;
+    try {
+      const newUser = await this.User.create({
+        fName,
+        lName,
+        email,
+        encryptedPassword,
+        salt,
+      });
+      return (newUser.id, newUser.fName);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async getUserByEmail(_email) {
+    return await this.User.findOne({ where: { email: _email } });
   }
 
   async getUserById(id) {
